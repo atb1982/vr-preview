@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cyma Rubin Gallery – VR Slide Preview</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #e8e8ea; }
+  canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  canvas#gl:active { cursor: grabbing; }
+  #panel { position: fixed; top: 12px; left: 12px; width: 320px; max-height: calc(100% - 24px); overflow: auto;
+    background: rgba(18,18,22,.88); border: 1px solid #333; border-radius: 10px; padding: 14px 16px; box-sizing: border-box;
+    backdrop-filter: blur(6px); }
+  #panel.hidden { display: none; }
+  h1 { font-size: 15px; margin: 0 0 2px; }
+  .sub { color: #9a9aa3; font-size: 12px; margin-bottom: 12px; }
+  label { display: block; font-size: 12px; color: #b9b9c2; margin: 10px 0 4px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  input[type=number] { width: 80px; background: #111; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 4px 6px; }
+  input[type=range] { flex: 1; }
+  button { background: #2a2a31; color: #eee; border: 1px solid #4a4a55; border-radius: 6px; padding: 6px 10px; cursor: pointer; font: inherit; }
+  button:hover { background: #34343d; }
+  button:disabled { opacity: .45; cursor: default; }
+  #vrBtn { width: 100%; margin-top: 12px; padding: 10px; font-weight: 600; background: #cc0000; border-color: #e33; }
+  #vrBtn:disabled { background: #3a2a2a; border-color: #533; }
+  .file { display: block; width: 100%; padding: 10px; border: 1px dashed #555; border-radius: 8px; text-align: center; cursor: pointer; color: #ccc; box-sizing: border-box; }
+  .file:hover { border-color: #888; }
+  .file input { display: none; }
+  #slideName { flex: 1; text-align: center; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .info { font-size: 12px; color: #a8a8b2; margin-top: 10px; background: #0d0d10; border-radius: 6px; padding: 8px; }
+  .warn { color: #ffcf6e; }
+  details { margin-top: 10px; font-size: 12px; color: #b0b0b8; }
+  summary { cursor: pointer; color: #ddd; }
+  kbd { background: #2b2b33; border: 1px solid #444; border-radius: 3px; padding: 0 4px; font-size: 11px; }
+  #toggle { position: fixed; top: 12px; right: 12px; }
+  #drop { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; font-size: 22px;
+    background: rgba(204,0,0,.25); border: 3px dashed #f55; pointer-events: none; }
+  #loading { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.7);
+    padding: 6px 12px; border-radius: 6px; font-size: 12px; display: none; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<button id="toggle" title="Show/hide panel (H)">☰ Panel</button>
+
+<div id="panel">
+  <h1>Cyma Rubin Gallery – VR slide preview</h1>
+  <div class="sub">Hill Library 3208A · 360° screen, 15,360 × 1080 px</div>
+
+  <label class="file">Load slide images (PNG / JPG, select several)
+    <input id="files" type="file" accept="image/*" multiple>
+  </label>
+
+  <label>Slide</label>
+  <div class="row">
+    <button id="prev" title="Previous (←)">◀</button>
+    <div id="slideName">Test pattern</div>
+    <button id="next" title="Next (→)">▶</button>
+  </div>
+
+  <label>Room diameter (m) <span style="color:#777">– 27.5 ft ≈ 8.38 m</span></label>
+  <div class="row"><input id="diam" type="number" step="0.01" min="2" max="30" value="8.38"></div>
+
+  <label>Bottom edge of screen above floor (m) <span style="color:#777">– confirm with staff</span></label>
+  <div class="row"><input id="bottomR" type="range" min="0" max="2" step="0.01" value="0.6"><input id="bottom" type="number" step="0.01" value="0.6"></div>
+
+  <label>Screen height (m)</label>
+  <div class="row"><input id="heightAuto" type="checkbox" checked><span style="font-size:12px">auto (15,360 × 1080 proportions)</span><input id="height" type="number" step="0.01" value="1.85" disabled></div>
+
+  <label>Rotate image around the room (where the seam sits)</label>
+  <div class="row"><input id="rotR" type="range" min="0" max="360" step="1" value="0"><span id="rotV" style="width:38px;text-align:right">0°</span></div>
+
+  <label>Eye height in browser view (m)</label>
+  <div class="row"><input id="eyeR" type="range" min="1.0" max="1.9" step="0.01" value="1.6"><span id="eyeV" style="width:38px;text-align:right">1.60</span></div>
+
+  <label style="display:flex;gap:6px;align-items:center"><input id="chairs" type="checkbox" checked> Show chairs</label>
+
+  <div class="info" id="info"></div>
+
+  <button id="vrBtn" disabled>Checking VR…</button>
+  <div id="vrNote" style="font-size:12px;color:#9a9aa3;margin-top:6px"></div>
+
+  <details>
+    <summary>Controls</summary>
+    <p><b>Browser:</b> drag to look · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> walk · scroll to zoom · <kbd>←</kbd><kbd>→</kbd> change slide · <kbd>C</kbd> back to center · <kbd>H</kbd> hide panel. Drop images anywhere to load them.</p>
+    <p><b>Quest 2:</b> trigger = next slide · grip = previous · left thumbstick = glide around the room · click a thumbstick = return to center. You can also walk physically.</p>
+  </details>
+  <details>
+    <summary>Notes on accuracy</summary>
+    <p>The wall is modeled as a cylinder with the image wrapped once around it. Projector brightness, color, and edge blending are not simulated, and the screen's height and bottom edge are estimates. Confirm them with library_hightechspaces@ncsu.edu.</p>
+    <p>Export each slide at the full 15,360 px width if you can. Lower-resolution exports will look softer here than in the room.</p>
+  </details>
+</div>
+<div id="drop">Drop slide images to load</div>
+<div id="loading">Loading…</div>
+
+<script>
+"use strict";
+// ---------- tiny mat4 (column-major) ----------
+const M = {
+  id(){ const m=new Float32Array(16); m[0]=m[5]=m[10]=m[15]=1; return m; },
+  mul(a,b){ const o=new Float32Array(16);
+    for(let i=0;i<4;i++) for(let j=0;j<4;j++){ let s=0; for(let k=0;k<4;k++) s+=a[k*4+j]*b[i*4+k]; o[i*4+j]=s; } return o; },
+  persp(fovy,asp,n,f){ const t=1/Math.tan(fovy/2), nf=1/(n-f);
+    return new Float32Array([t/asp,0,0,0, 0,t,0,0, 0,0,(f+n)*nf,-1, 0,0,2*f*n*nf,0]); },
+  tr(x,y,z){ const m=M.id(); m[12]=x; m[13]=y; m[14]=z; return m; },
+  sc(x,y,z){ const m=M.id(); m[0]=x; m[5]=y; m[10]=z; return m; },
+  ry(a){ const c=Math.cos(a), s=Math.sin(a); return new Float32Array([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]); },
+  rx(a){ const c=Math.cos(a), s=Math.sin(a); return new Float32Array([1,0,0,0, 0,c,s,0, 0,-s,c,0, 0,0,0,1]); },
+};
+
+// ---------- state ----------
+const GALLERY_W = 15360, GALLERY_H = 1080, SEGS = 4;
+const S = {
+  diameter: 8.38, bottom: 0.6, heightAuto: true, heightManual: 1.85, rot: 0, eye: 1.6,
+  slides: [], idx: 0, imgW: GALLERY_W, imgH: GALLERY_H,
+  cam: { x:0, z:2.6, yaw:0, pitch:-0.12, fov: 80*Math.PI/180 },
+  glow: [0.3,0.3,0.4], chairs: true,
+  inXR: false,
+};
+const screenH = () => S.heightAuto ? Math.PI*S.diameter*(GALLERY_H/GALLERY_W) : S.heightManual;
+
+// ---------- GL setup ----------
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl2', { antialias: true, xrCompatible: true });
+if (!gl) { document.body.innerHTML = '<p style="padding:20px">WebGL2 is not available in this browser.</p>'; throw new Error('no webgl2'); }
+const aniso = gl.getExtension('EXT_texture_filter_anisotropic');
+const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+
+function sh(type, src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
+const prog = gl.createProgram();
+gl.attachShader(prog, sh(gl.VERTEX_SHADER, `#version 300 es
+in vec3 aPos; in vec2 aUV; in vec3 aCol; uniform mat4 uP,uV,uM;
+out vec2 vUV; out vec3 vCol; out vec3 vW;
+void main(){ vUV=aUV; vCol=aCol; vec4 w=uM*vec4(aPos,1.0); vW=w.xyz; gl_Position=uP*uV*w; }`));
+gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, `#version 300 es
+precision highp float; in vec2 vUV; in vec3 vCol; in vec3 vW;
+uniform sampler2D uT; uniform vec4 uC; uniform int uMode; uniform vec3 uGlow; uniform float uR, uAmb;
+out vec4 o;
+void main(){
+  if (uMode==1) { o = texture(uT,vUV); }                       // projected image
+  else if (uMode==2) {                                         // lit props, brighter toward the screen
+    float d = clamp(length(vW.xz)/uR, 0.0, 1.0);
+    o = vec4(vCol*(uAmb*(0.8+0.45*d))*mix(vec3(1.0), uGlow*1.6+0.2, 0.35), 1.0); }
+  else if (uMode==3) {                                         // carpet, lit by the screen
+    float d = clamp(length(vW.xz)/uR, 0.0, 1.0);
+    vec3 c = texture(uT, vW.xz*0.55).rgb;
+    o = vec4(c*(0.22 + (uGlow*0.9+0.15)*(0.35+1.2*d*d*d)), 1.0); }
+  else if (uMode==4) { o = vec4(vCol,1.0); }                  // emissive (lamps)
+  else { o = uC; }
+}`));
+gl.bindAttribLocation(prog,0,'aPos'); gl.bindAttribLocation(prog,1,'aUV'); gl.bindAttribLocation(prog,2,'aCol');
+gl.linkProgram(prog);
+if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+const U = {}; for (const n of ['uP','uV','uM','uT','uC','uMode','uGlow','uR','uAmb']) U[n]=gl.getUniformLocation(prog,n);
+
+// stride-5 meshes (pos, uv)
+function mesh(verts, idx, mode){
+  const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
+  const vb=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,vb); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(verts),gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,20,0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,2,gl.FLOAT,false,20,12);
+  let count = verts.length/5, type=null;
+  if (idx){ const ib=gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint32Array(idx),gl.STATIC_DRAW); count=idx.length; type=gl.UNSIGNED_INT; }
+  gl.bindVertexArray(null);
+  return { vao, count, mode, type, bufs:[vb] };
+}
+// stride-6 meshes (pos, color) for props
+function meshPC(verts, idx){
+  const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
+  const vb=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,vb); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(verts),gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,24,0);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2,3,gl.FLOAT,false,24,12);
+  const ib=gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint32Array(idx),gl.STATIC_DRAW);
+  gl.bindVertexArray(null);
+  return { vao, count: idx.length, mode: gl.TRIANGLES, type: gl.UNSIGNED_INT, bufs:[vb,ib] };
+}
+function freeMesh(m){ if(!m) return; m.bufs.forEach(b=>gl.deleteBuffer(b)); gl.deleteVertexArray(m.vao); }
+
+// Unit cylinder band (radius 1, y 0..1) from angle a0..a1. Angle 0 = straight ahead (-Z), increasing to the right.
+function cylBand(a0, a1, n){
+  const v=[], ix=[];
+  for(let i=0;i<=n;i++){ const t=i/n, a=a0+(a1-a0)*t, x=Math.sin(a), z=-Math.cos(a);
+    v.push(x,0,z,t,0, x,1,z,t,1); }
+  for(let i=0;i<n;i++){ const b=i*2; ix.push(b,b+1,b+2, b+1,b+3,b+2); }
+  return mesh(v, ix, gl.TRIANGLES);
+}
+const screenSegs = []; for(let i=0;i<SEGS;i++) screenSegs.push(cylBand(i*2*Math.PI/SEGS,(i+1)*2*Math.PI/SEGS,96));
+const wallMesh = cylBand(0, 2*Math.PI, 128);
+const disc = (()=>{ const v=[0,0,0,0,0], ix=[]; const n=128;
+  for(let i=0;i<=n;i++){ const a=i/n*2*Math.PI; v.push(Math.sin(a),0,-Math.cos(a),0,0); }
+  for(let i=1;i<=n;i++) ix.push(0,i,i+1); return mesh(v,ix,gl.TRIANGLES); })();
+
+// ---------- room furnishings (built from simple shaded boxes and cylinders) ----------
+const CEIL = 3.9, TRUSS_Y = 3.35;
+function Builder(){ this.v=[]; this.i=[]; }
+Builder.prototype.quad = function(p, col, shade){ // p: 4 corners [x,y,z]
+  const b=this.v.length/6; for(const q of p) this.v.push(q[0],q[1],q[2], col[0]*shade, col[1]*shade, col[2]*shade);
+  this.i.push(b,b+1,b+2, b,b+2,b+3);
+};
+// box centred at (cx,cy,cz), size (sx,sy,sz), rotated by yaw about Y (same convention as M.ry)
+Builder.prototype.box = function(cx,cy,cz, sx,sy,sz, yaw, col){
+  const c=Math.cos(yaw), s=Math.sin(yaw), hx=sx/2, hy=sy/2, hz=sz/2;
+  const P=(x,y,z)=>[cx + x*c + z*s, cy + y, cz - x*s + z*c];
+  const f=[ // corners for each face + shade
+    [[-hx,hy,-hz],[hx,hy,-hz],[hx,hy,hz],[-hx,hy,hz],1.0],
+    [[-hx,-hy,-hz],[-hx,-hy,hz],[hx,-hy,hz],[hx,-hy,-hz],0.35],
+    [[hx,-hy,-hz],[hx,-hy,hz],[hx,hy,hz],[hx,hy,-hz],0.78],
+    [[-hx,-hy,-hz],[-hx,hy,-hz],[-hx,hy,hz],[-hx,-hy,hz],0.72],
+    [[-hx,-hy,hz],[-hx,hy,hz],[hx,hy,hz],[hx,-hy,hz],0.62],
+    [[-hx,-hy,-hz],[hx,-hy,-hz],[hx,hy,-hz],[-hx,hy,-hz],0.66],
+  ];
+  for(const q of f) this.quad(q.slice(0,4).map(a=>P(a[0],a[1],a[2])), col, q[4]);
+};
+Builder.prototype.beam = function(x0,y,z0, x1,z1, w,h, col){
+  const dx=x1-x0, dz=z1-z0, L=Math.hypot(dx,dz);
+  this.box((x0+x1)/2, y, (z0+z1)/2, L, h, w, Math.atan2(-dz,dx), col);
+};
+Builder.prototype.cyl = function(cx,y0,cz, r,h, n, col, capShade){
+  for(let k=0;k<n;k++){ const a0=k/n*2*Math.PI, a1=(k+1)/n*2*Math.PI;
+    const x0=cx+r*Math.sin(a0), z0=cz-r*Math.cos(a0), x1=cx+r*Math.sin(a1), z1=cz-r*Math.cos(a1);
+    this.quad([[x0,y0,z0],[x0,y0+h,z0],[x1,y0+h,z1],[x1,y0,z1]], col, 0.55+0.3*Math.abs(Math.sin((a0+a1)/2)));
+    this.quad([[cx,y0+h,cz],[cx,y0+h,cz],[x1,y0+h,z1],[x0,y0+h,z0]], col, 1.0);
+    this.quad([[cx,y0,cz],[cx,y0,cz],[x0,y0,z0],[x1,y0,z1]], col, capShade ?? 0.35);
+  }
+};
+Builder.prototype.ring = function(r, y, n, w, h, col){
+  for(let k=0;k<n;k++){ const a0=k/n*2*Math.PI, a1=(k+1)/n*2*Math.PI;
+    this.beam(r*Math.sin(a0), y, -r*Math.cos(a0), r*Math.sin(a1), -r*Math.cos(a1), w, h, col); }
+};
+function addChair(b, x, z, yaw){
+  const frame=[0.70,0.71,0.74], mesh_=[0.46,0.47,0.50], dark=[0.20,0.20,0.22];
+  const c=Math.cos(yaw), s=Math.sin(yaw);
+  const part=(lx,ly,lz, sx,sy,sz, py, col)=> b.box(x + lx*c + lz*s, ly, z - lx*s + lz*c, sx,sy,sz, yaw+py, col);
+  for(let k=0;k<5;k++){ const a=k/5*2*Math.PI+0.3, ex=0.3*Math.cos(a), ez=-0.3*Math.sin(a);
+    part(ex/2,0.07,ez/2, 0.3,0.035,0.045, a, frame);
+    part(ex,0.03,ez, 0.05,0.05,0.05, 0, dark); }
+  part(0,0.27,0, 0.055,0.38,0.055, 0, frame);           // gas cylinder
+  part(0,0.48,0, 0.50,0.07,0.48, 0, mesh_);             // seat
+  part(0,0.84,0.24, 0.46,0.52,0.045, 0, mesh_);         // backrest (behind the sitter)
+  part(-0.2,0.62,0.235, 0.035,0.28,0.03, 0, frame);     // back supports
+  part(0.2,0.62,0.235, 0.035,0.28,0.03, 0, frame);
+  for(const sx of [-0.27,0.27]){
+    part(sx,0.58,0.05, 0.035,0.2,0.035, 0, frame);      // arm posts
+    part(sx,0.69,0.0, 0.055,0.03,0.30, 0, dark);        // arm pads
+  }
+}
+let props=null, lamps=null, chairs=null;
+function buildRoom(){
+  const R=S.diameter/2;
+  const p=new Builder(), l=new Builder(), ch=new Builder();
+  const trussC=[0.20,0.20,0.22], projLight=[0.62,0.63,0.66], projDark=[0.13,0.13,0.14], can=[0.07,0.07,0.075];
+  // overhead truss: three rings + radial spokes + drop rods
+  const rings=[0.28*R, 0.55*R, 0.82*R];
+  for(const r of rings) p.ring(r, TRUSS_Y, 32, 0.07, 0.07, trussC);
+  for(let k=0;k<16;k++){ const a=k/16*2*Math.PI;
+    p.beam(rings[0]*Math.sin(a),TRUSS_Y,-rings[0]*Math.cos(a), rings[2]*Math.sin(a),-rings[2]*Math.cos(a), 0.06,0.06, trussC);
+    if(k%2===0) for(const r of rings) p.box(r*Math.sin(a),(TRUSS_Y+CEIL)/2,-r*Math.cos(a), 0.04,CEIL-TRUSS_Y,0.04,0,trussC); }
+  // 8 projectors (15,360 px = 8 × 1920), each throwing across the room to the opposite wall
+  for(let k=0;k<8;k++){ const a=(k+0.5)/8*2*Math.PI, r=rings[1], x=r*Math.sin(a), z=-r*Math.cos(a);
+    const col = k%2 ? projDark : projLight;
+    p.box(x, TRUSS_Y-0.28, z, 0.52,0.2,0.56, -a, col);
+    p.box(x, TRUSS_Y-0.12, z, 0.05,0.18,0.05, 0, trussC);
+    const lx=x-0.3*Math.sin(a), lz=z+0.3*Math.cos(a); // lens faces the room centre
+    p.box(lx, TRUSS_Y-0.29, lz, 0.12,0.1,0.06, -a, [0.04,0.04,0.04]);
+    // a second, smaller unit on the inner ring
+    const a2=(k)/8*2*Math.PI, r2=rings[0];
+    p.box(r2*Math.sin(a2), TRUSS_Y-0.2, -r2*Math.cos(a2), 0.36,0.16,0.4, -a2, k%2?projLight:projDark);
+  }
+  // black speaker/light cans hanging from the outer ring, with warm downlights
+  for(let k=0;k<10;k++){ const a=(k+0.25)/10*2*Math.PI, r=rings[2], x=r*Math.sin(a), z=-r*Math.cos(a);
+    p.cyl(x, TRUSS_Y-0.42, z, 0.16, 0.38, 16, can, 0.2);
+    l.cyl(x, TRUSS_Y-0.425, z, 0.11, 0.004, 16, [1.0,0.86,0.62], 1.0);
+  }
+  // small recessed downlights in the ceiling
+  for(let k=0;k<6;k++){ const a=k/6*2*Math.PI, r=0.42*R;
+    l.cyl(r*Math.sin(a), CEIL-0.01, -r*Math.cos(a), 0.09, 0.005, 12, [0.75,0.72,0.66], 1.0); }
+  // baseboard where the black wall meets the carpet
+  p.ring(R-0.03, 0.05, 64, 0.06, 0.1, [0.05,0.05,0.055]);
+  // chair cluster in the centre, facing outward toward the screen
+  for(let k=0;k<6;k++){ const ph=(k/6)*2*Math.PI+0.25, r=0.75;
+    addChair(ch, r*Math.sin(ph), -r*Math.cos(ph), -ph); }
+  freeMesh(props); freeMesh(lamps); freeMesh(chairs);
+  props=meshPC(p.v,p.i); lamps=meshPC(l.v,l.i); chairs=meshPC(ch.v,ch.i);
+}
+
+// carpet texture: teal with darker / lighter speckles, like the gallery floor
+const carpetTex = (()=>{
+  const N=512, c=document.createElement('canvas'); c.width=c.height=N; const x=c.getContext('2d');
+  x.fillStyle='#1a4f60'; x.fillRect(0,0,N,N);
+  let seed=7; const rnd=()=>{ seed=(seed*16807)%2147483647; return seed/2147483647; };
+  const cols=['#143f4d','#0f3340','#2a7183','#3b8595','#18495a','#5aa3b0'];
+  for(let i=0;i<9000;i++){ x.fillStyle=cols[(rnd()*cols.length)|0]; const w=1+rnd()*3, h=1+rnd()*2;
+    const px=rnd()*N, py=rnd()*N; x.fillRect(px,py,w,h); x.fillRect((px+N)%N-N,py,w,h); }
+  for(let i=0;i<260;i++){ x.fillStyle = rnd()<0.5 ? 'rgba(10,30,45,.6)' : 'rgba(120,190,200,.35)';
+    x.beginPath(); x.arc(rnd()*N, rnd()*N, 2+rnd()*4, 0, 7); x.fill(); }
+  const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,c); gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);
+  if (aniso) gl.texParameterf(gl.TEXTURE_2D, aniso.TEXTURE_MAX_ANISOTROPY_EXT, 8);
+  return t; })();
+buildRoom();
+
+// textures for the current slide (re-used between slides to keep memory low on the headset)
+const segTex = [];
+for(let i=0;i<SEGS;i++){ const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([40,40,40,255])); segTex.push(t); }
+const scratch = document.createElement('canvas');
+const avgC = document.createElement('canvas'); avgC.width=32; avgC.height=4;
+function uploadImage(img){
+  const W = img.width || img.naturalWidth, H = img.height || img.naturalHeight;
+  const segW = W/SEGS, lim = Math.min(4096, maxTex);
+  const k = Math.min(1, lim/segW, lim/H);
+  scratch.width = Math.max(1,Math.round(segW*k)); scratch.height = Math.max(1,Math.round(H*k));
+  const cx = scratch.getContext('2d');
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  for(let i=0;i<SEGS;i++){
+    cx.clearRect(0,0,scratch.width,scratch.height);
+    cx.drawImage(img, i*segW, 0, segW, H, 0, 0, scratch.width, scratch.height);
+    gl.bindTexture(gl.TEXTURE_2D, segTex[i]);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,scratch);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    if (aniso) gl.texParameterf(gl.TEXTURE_2D, aniso.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)));
+  }
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  // average colour of the slide → light spill onto the carpet, chairs and ceiling gear
+  try { const ax=avgC.getContext('2d', {willReadFrequently:true}); ax.drawImage(img,0,0,32,4);
+    const d=ax.getImageData(0,0,32,4).data; let r=0,g=0,b=0; for(let i=0;i<d.length;i+=4){ r+=d[i]; g+=d[i+1]; b+=d[i+2]; }
+    const n=d.length/4; S.glow=[r/n/255, g/n/255, b/n/255]; } catch(e){ S.glow=[0.4,0.4,0.4]; }
+  S.imgW = W; S.imgH = H;
+  updateInfo();
+}
+
+// ---------- test pattern ----------
+function makeTestPattern(){
+  const W=GALLERY_W, H=GALLERY_H, c=document.createElement('canvas'); c.width=W; c.height=H;
+  const x=c.getContext('2d');
+  const mmPerPx = Math.PI*8.38*1000/W;
+  for(let col=0; col<8; col++){
+    x.fillStyle = col%2 ? '#1b2340' : '#22305a'; x.fillRect(col*1920,0,1920,H);
+  }
+  x.strokeStyle='rgba(255,255,255,.18)'; x.lineWidth=2;
+  for(let px=0; px<=W; px+=240){ x.beginPath(); x.moveTo(px,0); x.lineTo(px,H); x.stroke(); }
+  for(let py=0; py<=H; py+=180){ x.beginPath(); x.moveTo(0,py); x.lineTo(W,py); x.stroke(); }
+  x.strokeStyle='#ffd23f'; x.lineWidth=6; x.strokeRect(3,3,W-6,H-6);
+  x.fillStyle='#fff'; x.textBaseline='top';
+  for(let col=0; col<8; col++){
+    const ox = col*1920;
+    x.fillStyle='#ffd23f'; x.font='bold 64px sans-serif';
+    x.fillText(`${col*45}°  ·  px ${col*1920}–${(col+1)*1920}`, ox+40, 36);
+    let y = 150;
+    for(const size of [18,24,36,48,72,96,144]){
+      x.fillStyle='#fff'; x.font=`${size}px sans-serif`;
+      const cm = (size*mmPerPx/10).toFixed(1);
+      x.fillText(`${size}px text ≈ ${cm} cm tall`, ox+40, y);
+      y += size*1.25 + 10;
+    }
+  }
+  x.fillStyle='#ff5a5a'; x.font='bold 54px sans-serif';
+  x.fillText('◀ image starts / ends here (seam)', 40, H-90);
+  x.textAlign='right'; x.fillText('seam ▶', W-40, H-90);
+  return c;
+}
+S.slides.push({ name: 'Test pattern (15,360 × 1080)', src: makeTestPattern() });
+
+// ---------- slides ----------
+const $ = id => document.getElementById(id);
+const loadingEl = $('loading');
+let loadToken = 0;
+async function showSlide(i){
+  if (!S.slides.length) return;
+  S.idx = (i + S.slides.length) % S.slides.length;
+  const sl = S.slides[S.idx];
+  $('slideName').textContent = `${S.idx+1}/${S.slides.length} · ${sl.name}`;
+  const tok = ++loadToken;
+  if (sl.src instanceof HTMLCanvasElement){ uploadImage(sl.src); return; }
+  loadingEl.style.display='block';
+  try {
+    const img = new Image(); img.src = sl.src; await img.decode();
+    if (tok === loadToken) uploadImage(img);
+  } catch(e){ $('info').innerHTML = `<span class="warn">Couldn't read ${sl.name}.</span>`; }
+  loadingEl.style.display='none';
+}
+function addFiles(files){
+  const imgs = [...files].filter(f=>f.type.startsWith('image/'))
+    .sort((a,b)=>a.name.localeCompare(b.name, undefined, {numeric:true}));
+  if (!imgs.length) return;
+  const start = S.slides.length;
+  for (const f of imgs) S.slides.push({ name: f.name, src: URL.createObjectURL(f) });
+  showSlide(start);
+}
+$('files').addEventListener('change', e => addFiles(e.target.files));
+$('prev').onclick = () => showSlide(S.idx-1);
+$('next').onclick = () => showSlide(S.idx+1);
+const dropEl = $('drop');
+addEventListener('dragover', e => { e.preventDefault(); dropEl.style.display='flex'; });
+addEventListener('dragleave', e => { if (e.target===document.documentElement || !e.relatedTarget) dropEl.style.display='none'; });
+addEventListener('drop', e => { e.preventDefault(); dropEl.style.display='none'; addFiles(e.dataTransfer.files); });
+
+// ---------- settings ----------
+function updateInfo(){
+  const circ = Math.PI*S.diameter, h = screenH(), mm = circ*1000/S.imgW;
+  if (S.heightAuto) $('height').value = h.toFixed(2);
+  let html = `Wall band: <b>${circ.toFixed(2)} m</b> around × <b>${h.toFixed(2)} m</b> tall<br>`+
+    `Image: ${S.imgW.toLocaleString()} × ${S.imgH.toLocaleString()} px · 1 px ≈ ${mm.toFixed(2)} mm on the wall`;
+  const asp = S.imgW/S.imgH, target = GALLERY_W/GALLERY_H;
+  if (Math.abs(asp/target-1) > 0.02) html += `<br><span class="warn">This image's proportions (${asp.toFixed(2)}:1) differ from the gallery canvas (${target.toFixed(2)}:1), so it is stretched to fill the wall.</span>`;
+  if (S.imgW < GALLERY_W*0.95) html += `<br><span class="warn">This image is narrower than 15,360 px, so text will look softer here than in the room.</span>`;
+  $('info').innerHTML = html;
+}
+function bindPair(rangeId, numId, key){
+  const r=$(rangeId), n=$(numId);
+  const set=v=>{ S[key]=+v; r.value=v; n.value=v; updateInfo(); };
+  r.oninput=()=>set(r.value); n.oninput=()=>set(n.value);
+}
+bindPair('bottomR','bottom','bottom');
+$('diam').oninput = e => { const v=+e.target.value; if (v>=2){ S.diameter=v; buildRoom(); updateInfo(); } };
+$('chairs').onchange = e => { S.chairs = e.target.checked; };
+$('heightAuto').onchange = e => { S.heightAuto=e.target.checked; $('height').disabled=S.heightAuto; if(!S.heightAuto) S.heightManual=+$('height').value; updateInfo(); };
+$('height').oninput = e => { S.heightManual=+e.target.value; updateInfo(); };
+$('rotR').oninput = e => { S.rot=+e.target.value; $('rotV').textContent=S.rot+'°'; };
+$('eyeR').oninput = e => { S.eye=+e.target.value; $('eyeV').textContent=S.eye.toFixed(2); };
+const panel=$('panel');
+$('toggle').onclick = () => panel.classList.toggle('hidden');
+
+// ---------- drawing ----------
+function drawScene(P, V){
+  gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
+  gl.clearColor(0.01,0.01,0.012,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.useProgram(prog);
+  gl.uniformMatrix4fv(U.uP,false,P); gl.uniformMatrix4fv(U.uV,false,V);
+  const r=S.diameter/2, h=screenH(), g=S.glow, lum=0.3*g[0]+0.59*g[1]+0.11*g[2];
+  gl.uniform3f(U.uGlow,g[0],g[1],g[2]); gl.uniform1f(U.uR,r); gl.uniform1f(U.uAmb,0.35+0.9*lum);
+  const draw=(m)=>{ gl.bindVertexArray(m.vao); m.type ? gl.drawElements(m.mode,m.count,m.type,0) : gl.drawArrays(m.mode,0,m.count); };
+  gl.activeTexture(gl.TEXTURE0); gl.uniform1i(U.uT,0);
+  // black room shell + ceiling (spill from the screen lifts them slightly)
+  gl.uniform1i(U.uMode,0);
+  const k=0.025+0.05*lum;
+  gl.uniform4f(U.uC,k,k,k*1.08,1); gl.uniformMatrix4fv(U.uM,false,M.sc(r*1.004,CEIL,r*1.004)); draw(wallMesh);
+  gl.uniform4f(U.uC,k*0.6,k*0.6,k*0.65,1); gl.uniformMatrix4fv(U.uM,false,M.mul(M.tr(0,CEIL,0),M.sc(r*1.01,1,r*1.01))); draw(disc);
+  // carpet
+  gl.uniform1i(U.uMode,3); gl.bindTexture(gl.TEXTURE_2D,carpetTex);
+  gl.uniformMatrix4fv(U.uM,false,M.sc(r*1.004,1,r*1.004)); draw(disc);
+  // truss, projectors, cans, chairs
+  gl.uniform1i(U.uMode,2); gl.uniformMatrix4fv(U.uM,false,M.id());
+  draw(props); if (S.chairs) draw(chairs);
+  gl.uniform1i(U.uMode,4); draw(lamps);
+  // projected image
+  gl.uniform1i(U.uMode,1);
+  const Ms = M.mul(M.ry(-S.rot*Math.PI/180), M.mul(M.tr(0,S.bottom,0), M.sc(r,h,r)));
+  gl.uniformMatrix4fv(U.uM,false,Ms);
+  for(let i=0;i<SEGS;i++){ gl.bindTexture(gl.TEXTURE_2D,segTex[i]); draw(screenSegs[i]); }
+  gl.bindVertexArray(null);
+}
+
+// ---------- browser (non-VR) view ----------
+const keys = new Set();
+addEventListener('keydown', e => {
+  if (e.target.tagName==='INPUT') return;
+  const k=e.key.toLowerCase(); keys.add(k);
+  if (e.key==='ArrowRight' || e.key==='PageDown') showSlide(S.idx+1);
+  if (e.key==='ArrowLeft' || e.key==='PageUp') showSlide(S.idx-1);
+  if (k==='h') panel.classList.toggle('hidden');
+  if (k==='c') { S.cam.x=0; S.cam.z=0; }
+});
+addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+let drag=null;
+canvas.addEventListener('pointerdown', e => { drag={x:e.clientX,y:e.clientY}; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointermove', e => { if(!drag) return;
+  const k = S.cam.fov/canvas.clientHeight;
+  S.cam.yaw += (e.clientX-drag.x)*k; S.cam.pitch += (e.clientY-drag.y)*k;
+  S.cam.pitch = Math.max(-1.4, Math.min(1.4, S.cam.pitch)); drag={x:e.clientX,y:e.clientY}; });
+canvas.addEventListener('pointerup', () => drag=null);
+canvas.addEventListener('wheel', e => { e.preventDefault();
+  S.cam.fov = Math.max(15*Math.PI/180, Math.min(110*Math.PI/180, S.cam.fov*Math.exp(e.deltaY*0.001))); }, {passive:false});
+
+function resize(){ const d=Math.min(devicePixelRatio||1,2);
+  const w=Math.round(canvas.clientWidth*d), h=Math.round(canvas.clientHeight*d);
+  if (canvas.width!==w || canvas.height!==h){ canvas.width=w; canvas.height=h; } }
+let last=performance.now();
+function frame(t){
+  if (S.inXR) return;
+  const dt=Math.min(0.05,(t-last)/1000); last=t;
+  resize();
+  // walking: camera faces -Z rotated by yaw (positive yaw = turned right)
+  const sp=1.6*dt, fx=Math.sin(S.cam.yaw), fz=-Math.cos(S.cam.yaw);
+  let mx=0, mz=0;
+  if(keys.has('w')){mx+=fx;mz+=fz;} if(keys.has('s')){mx-=fx;mz-=fz;}
+  if(keys.has('d')){mx-=fz;mz+=fx;} if(keys.has('a')){mx+=fz;mz-=fx;}
+  S.cam.x+=mx*sp; S.cam.z+=mz*sp;
+  const lim=S.diameter/2-0.3, d=Math.hypot(S.cam.x,S.cam.z); if(d>lim){ S.cam.x*=lim/d; S.cam.z*=lim/d; }
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,canvas.width,canvas.height);
+  const P=M.persp(S.cam.fov, canvas.width/canvas.height, 0.05, 100);
+  const V=M.mul(M.rx(S.cam.pitch), M.mul(M.ry(S.cam.yaw), M.tr(-S.cam.x,-S.eye,-S.cam.z)));
+  drawScene(P,V);
+  requestAnimationFrame(frame);
+}
+
+// ---------- WebXR (Quest) ----------
+const vrBtn=$('vrBtn'), vrNote=$('vrNote');
+let xrSession=null, baseRef=null, xrPos={x:0,z:0}, lastXR=0;
+async function checkXR(){
+  let ok=false;
+  try { ok = !!navigator.xr && await navigator.xr.isSessionSupported('immersive-vr'); } catch(e){ ok=false; }
+  if (ok){ vrBtn.disabled=false; vrBtn.textContent='Enter VR'; vrNote.textContent='Put on the headset and press Enter VR.'; }
+  else { vrBtn.disabled=true; vrBtn.textContent='VR not available here';
+    vrNote.textContent = navigator.xr ? 'This browser or frame does not allow VR. On the Quest, open this page in the Meta Quest Browser from its own web address.' : 'Open this page in the Meta Quest Browser on the headset to enter VR. The browser view here still works for previewing.'; }
+}
+vrBtn.onclick = async () => {
+  if (xrSession){ xrSession.end(); return; }
+  try {
+    const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] });
+    await gl.makeXRCompatible();
+    let scale = 1; try { scale = Math.min(1.4, XRWebGLLayer.getNativeFramebufferScaleFactor(session)); } catch(e){}
+    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl, { antialias: true, framebufferScaleFactor: Math.max(1, scale) }) });
+    try { baseRef = await session.requestReferenceSpace('local-floor'); }
+    catch(e){ baseRef = (await session.requestReferenceSpace('local')).getOffsetReferenceSpace(new XRRigidTransform({x:0,y:-1.6,z:0})); }
+    xrSession=session; S.inXR=true; xrPos={x:0,z:0}; vrBtn.textContent='Exit VR';
+    session.addEventListener('select', () => showSlide(S.idx+1));
+    session.addEventListener('squeeze', () => showSlide(S.idx-1));
+    session.addEventListener('end', () => { xrSession=null; S.inXR=false; vrBtn.textContent='Enter VR'; last=performance.now(); requestAnimationFrame(frame); });
+    lastXR=performance.now();
+    session.requestAnimationFrame(xrFrame);
+  } catch(e){ vrNote.textContent = 'Could not start VR: ' + (e.message||e); }
+};
+function xrFrame(t, fr){
+  const session=fr.session; session.requestAnimationFrame(xrFrame);
+  const dt=Math.min(0.05,(t-lastXR)/1000); lastXR=t;
+  const ref = baseRef.getOffsetReferenceSpace(new XRRigidTransform({x:-xrPos.x, y:0, z:-xrPos.z}));
+  const pose = fr.getViewerPose(ref); if(!pose) return;
+  // thumbstick glide (relative to head direction) + click to recenter
+  const m=pose.transform.matrix, fx=-m[8], fz=-m[10], fl=Math.hypot(fx,fz)||1;
+  for (const src of session.inputSources){ const gp=src.gamepad; if(!gp) continue;
+    if (gp.buttons[3] && gp.buttons[3].pressed){ xrPos={x:0,z:0}; continue; }
+    if (src.handedness!=='left' && session.inputSources.length>1) continue;
+    const ax=gp.axes[2]||0, ay=gp.axes[3]||0; if (Math.hypot(ax,ay)<0.15) continue;
+    const sp=1.4*dt, nx=fx/fl, nz=fz/fl;
+    xrPos.x += (nx*(-ay) + (-nz)*ax)*sp; xrPos.z += (nz*(-ay) + nx*ax)*sp;
+    const lim=S.diameter/2-0.3, d=Math.hypot(xrPos.x,xrPos.z); if(d>lim){ xrPos.x*=lim/d; xrPos.z*=lim/d; }
+  }
+  const layer=session.renderState.baseLayer;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+  gl.clearColor(0.02,0.02,0.025,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  for (const view of pose.views){
+    const vp=layer.getViewport(view); gl.viewport(vp.x,vp.y,vp.width,vp.height);
+    gl.enable(gl.SCISSOR_TEST); gl.scissor(vp.x,vp.y,vp.width,vp.height);
+    drawScene(view.projectionMatrix, view.transform.inverse.matrix);
+    gl.disable(gl.SCISSOR_TEST);
+  }
+}
+
+// ---------- preloaded slides ----------
+// If the site has slides.json (in slides/ or next to this page) listing image file names,
+// those images are loaded automatically and the first one is shown.
+async function preloadSlides(){
+  try {
+    // look in slides/ first, then next to this page
+    let base = 'slides/', r = await fetch('slides/slides.json', { cache: 'no-cache' }).catch(()=>null);
+    if (!r || !r.ok){ base = ''; r = await fetch('slides.json', { cache: 'no-cache' }).catch(()=>null); }
+    if (!r || !r.ok) return;
+    const list = await r.json();
+    const names = (Array.isArray(list) ? list : list.slides || []).filter(n => typeof n === 'string');
+    if (!names.length) return;
+    const start = S.slides.length;
+    for (const n of names) S.slides.push({ name: n.split('/').pop(), src: base + n });
+    showSlide(start);
+  } catch(e) { /* no preloaded slides here (e.g. opened as a single file) */ }
+}
+
+// ---------- start ----------
+showSlide(0);
+preloadSlides();
+checkXR();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
