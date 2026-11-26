@@ -381,6 +381,9 @@ async function showSlide(i){
   const sl = S.slides[S.idx];
   $('slideName').textContent = `${S.idx+1}/${S.slides.length} · ${sl.name}`;
   const tok = ++loadToken;
+  // warm the browser cache with the next slide so stepping through a long deck feels instant
+  const nx = S.slides[(S.idx+1) % S.slides.length];
+  if (nx && typeof nx.src === 'string') { const pre = new Image(); pre.src = nx.src; }
   if (sl.src instanceof HTMLCanvasElement){ uploadImage(sl.src); return; }
   loadingEl.style.display='block';
   try {

@@ -1,0 +1,49 @@
+name: Sync slides from Google Slides
+
+# Run it from the Actions tab ("Run workflow"), or automatically when a deck.pdf is uploaded.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['deck.pdf']
+
+permissions:
+  contents: write
+
+env:
+  # The ID from the deck's link: docs.google.com/presentation/d/<ID>/edit
+  DECK_ID: 1BIJTiWlez2eQP1VBnykOQv-aGXMip9iwYfFyOeiaEYY
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PDF renderer
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
+
+      - name: Get the deck as a PDF
+        run: |
+          if curl -fsSL -o /tmp/deck.pdf "https://docs.google.com/presentation/d/${DECK_ID}/export/pdf" \
+             && head -c 4 /tmp/deck.pdf | grep -q '%PDF'; then
+            echo "Downloaded the deck from Google Slides."
+          elif [ -f deck.pdf ]; then
+            cp deck.pdf /tmp/deck.pdf
+            echo "Using deck.pdf from the repository."
+          else
+            echo "::error::Could not download the deck. Share it as 'Anyone with the link: Viewer', or upload a PDF export named deck.pdf."
+            exit 1
+          fi
+
+      - name: Render every slide at 15360 x 1080
+        run: |
+          rm -rf slides && mkdir slides
+          pdftoppm -jpeg -jpegopt quality=88 -scale-to-x 15360 -scale-to-y 1080 /tmp/deck.pdf slides/slide
+          python3 -c "import json,os; f=sorted(x for x in os.listdir('slides') if x.endswith('.jpg')); json.dump(f, open('slides/slides.json','w'), indent=2); print(len(f), 'slides rendered')"
+
+      - name: Save the slides to the repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898699+github-actions[bot]@users.noreply.github.com"
+          git add -A slides
+          if git diff --cached --quiet; then echo "No changes."; else git commit -m "Sync slides from Google Slides" && git push; fi
